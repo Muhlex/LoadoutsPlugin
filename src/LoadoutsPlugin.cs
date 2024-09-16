@@ -5,7 +5,6 @@ using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
-using CounterStrikeSharp.API.Modules.Cvars;
 using CounterStrikeSharp.API.Modules.Utils;
 
 namespace LoadoutsPlugin;
@@ -20,13 +19,12 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 	public Config Config { get; set; } = new();
 	private ItemDefs ItemDefs { get; set; } = new([]);
 
-	private List<string[]> Loadouts { get; } = [];
-	private string[] RoundLoadout { get; set; } = [];
+	private Loadouts Loadouts { get; set; } = new();
+	private Loadout RoundLoadout { get; set; } = new();
 
 	public override void Load(bool hotReload)
 	{
 		RegisterFakeConVars(ConVars);
-		ConVars.Loadouts.ValueChanged += OnConvarLoadoutsChange;
 
 		RegisterListener<Listeners.OnServerPrecacheResources>(manifest =>
 		{
@@ -39,27 +37,19 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 	{
 		Config = config;
 		ItemDefs = ItemDefs.FromItemsGame("../../csgo/pak01_dir.vpk", Config);
+		Loadouts = Loadouts.FromConVarValue(ItemDefs, ConVars.Loadouts.Value);
+		ConVars.Loadouts.ValueChanged += OnConvarLoadoutsChange;
 	}
 
-	private void OnConvarLoadoutsChange(object? sender, string e)
+	private void OnConvarLoadoutsChange(object? sender, string value)
 	{
-		Loadouts.Clear();
-
-		var stringSplitOptions = StringSplitOptions.RemoveEmptyEntries & StringSplitOptions.TrimEntries;
-		var loadoutStrings = ConVars.Loadouts.Value.Split(' ', stringSplitOptions);
-		foreach (var loadoutString in loadoutStrings)
-		{
-			var itemNames = loadoutString.Split(',', StringSplitOptions.RemoveEmptyEntries);
-			Loadouts.Add(itemNames);
-		}
+		Loadouts = Loadouts.FromConVarValue(ItemDefs, value);
 	}
 
 	[GameEventHandler]
 	public HookResult OnRoundStart(EventRoundStart @event, GameEventInfo info)
 	{
-		if (Loadouts.Count == 0) RoundLoadout = [];
-		else RoundLoadout = Loadouts[Random.Shared.Next(Loadouts.Count)];
-
+		RoundLoadout = Loadouts.GetRandom();
 		return HookResult.Continue;
 	}
 
@@ -77,11 +67,11 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 			player.RemoveWeapons();
 			player.GiveNamedItem("weapon_knife");
 
-			foreach (var itemName in RoundLoadout)
+			foreach (var item in RoundLoadout.Items)
 			{
-				player.GiveNamedItem(itemName);
+				player.GiveNamedItem(item.Name);
 				// Hotfix for heavy assault suit not setting correct T model:
-				if (itemName == "item_heavyassaultsuit" && player.Team == CsTeam.Terrorist)
+				if (item.Name == "item_heavyassaultsuit" && player.Team == CsTeam.Terrorist)
 				{
 					pawn.SetModel("characters/models/tm_phoenix_heavy/tm_phoenix_heavy.vmdl");
 				}
@@ -94,56 +84,135 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 	[ConsoleCommand("css_items", "Get a list of available items.")]
 	public void OnCommandItems(CCSPlayerController? player, CommandInfo command)
 	{
-		foreach (var line in FormatItemList(command.CallingContext)) command.ReplyToCommand(line);
+		foreach (var line in ItemDefs.FormatPrintLines(command.CallingContext)) command.ReplyToCommand(line);
 	}
 
-	[ConsoleCommand("css_loadouts", "Update the current starting items.")]
-	[ConsoleCommand("css_loadout", "Update the current starting items.")]
+	[ConsoleCommand("css_loadouts", "Update the current starting loadout.")]
+	[ConsoleCommand("css_loadout", "Update the current starting loadout.")]
+	[ConsoleCommand("css_lo", "Update the current starting loadout.")]
 	[RequiresPermissionsOr("@css/cvar", "@loadouts/loadout")]
 	public void OnCommandLoadout(CCSPlayerController? player, CommandInfo command)
 	{
 		if (command.ArgCount < 2)
 		{
-			command.ReplyToCommand(AddPrefix("No arguments provided. Enter a valid loadout rotation.", command.CallingContext));
-			command.ReplyToCommand($"Usage: {ChatTrigger}{FormatCommandName(command)} [item]+[item]... [item]+...");
-			command.ReplyToCommand($" {ChatColors.Silver}Example: {ChatTrigger}{FormatCommandName(command)} usp+kevlar ak47+deagle+helmet");
-			command.ReplyToCommand($" {ChatColors.Silver}Use {ChatTrigger}{FormatCommandName(command, "css_items")} for a list of available items.");
+			Console.WriteLine("TODO: Print loadouts here");
 			return;
 		}
+
+		var splitOptions = StringSplitOptions.RemoveEmptyEntries & StringSplitOptions.TrimEntries;
+		var argSets = command.ArgString.Split(',', splitOptions);
+		foreach (var argSet in argSets)
+		{
+			var args = argSet.Split(' ', splitOptions);
+			var option = args[0];
+			var parameters = args.Skip(1);
+
+			switch (option)
+			{
+				case "":
+					break;
+
+				case "add":
+				case "ad":
+				case "a":
+					var loadout = new Loadout();
+					foreach (var partialItemAlias in parameters)
+					{
+						var def = ItemDefs.FindByAlias(partialItemAlias);
+						if (def == null) continue;
+						loadout.SetItem(def);
+					}
+					Loadouts.Add(loadout);
+					Console.WriteLine("Added loadout: " + string.Join(", ", loadout.Items));
+					break;
+
+				case "remove":
+				case "rem":
+				case "rm":
+				case "r":
+					var loadoutIndexStr = parameters.FirstOrDefault();
+					if (loadoutIndexStr == null)
+					{
+						Console.WriteLine("No loadout index provided");
+						break;
+					}
+					if (loadoutIndexStr is "all" or "any" or "every" or "*")
+					{
+						Loadouts.Clear();
+						Console.WriteLine("Removed all loadouts.");
+						break;
+					}
+
+					if (int.TryParse(loadoutIndexStr, out var loadoutIndex) && loadoutIndex > 0 && loadoutIndex <= Loadouts.Count)
+					{
+						Loadouts.RemoveAt(loadoutIndex - 1);
+						Console.WriteLine($"Removed loadout {loadoutIndexStr}");
+					}
+					else
+					{
+						Console.WriteLine($"Loadout {loadoutIndexStr} does not exist");
+					}
+					break;
+
+				default:
+					if (int.TryParse(option, out var loadoutSlot) && loadoutSlot > 0)
+					{
+						Console.WriteLine($"Loadout slot {loadoutSlot}");
+						break;
+					}
+					else
+					{
+						Console.WriteLine($"Unknown option '{option}'");
+						break;
+					}
+			}
+		}
+
+
+		// if (command.ArgCount < 2)
+		// {
+		// 	command.ReplyToCommand(AddPrefix("No arguments provided. Enter a valid loadout rotation.", command.CallingContext));
+		// 	command.ReplyToCommand($"Usage: {ChatTrigger}{FormatCommandName(command)} [item]+[item]... [item]+...");
+		// 	command.ReplyToCommand($" {ChatColors.Silver}Example: {ChatTrigger}{FormatCommandName(command)} usp+kevlar ak47+deagle+helmet");
+		// 	command.ReplyToCommand($" {ChatColors.Silver}Use {ChatTrigger}{FormatCommandName(command, "css_items")} for a list of available items.");
+		// 	return;
+		// }
 
 		// TODO: Validate identical slots
 		// TODO: Print differently on server
 		// TODO: Give calling player more feedback than the others
+		// TODO: Handle empty
+		// TODO: Make a fucking movement menu
 
-		var name = command.CallingPlayer?.PlayerName;
-		Server.PrintToChatAll($" {ChatColors.Olive}{name}{ChatColors.Default} set the loadout rotation to:");
+		// var name = command.CallingPlayer?.PlayerName;
+		// Server.PrintToChatAll($" {ChatColors.Olive}{name}{ChatColors.Default} set the loadout rotation to:");
 
-		var loadouts = new List<string>();
-		for (int i = 1; i < command.ArgCount; i++)
-		{
-			var partialAliases = SymbolsRegex().Split(command.GetArg(i)).Where(name => !string.IsNullOrWhiteSpace(name));
-			var items = new List<string>();
-			var loadoutDisplayStr = new StringBuilder();
+		// var loadouts = new List<string>();
+		// for (int i = 1; i < command.ArgCount; i++)
+		// {
+		// 	var partialAliases = SymbolsRegex().Split(command.GetArg(i)).Where(name => !string.IsNullOrWhiteSpace(name));
+		// 	var items = new List<string>();
+		// 	var loadoutDisplay = new StringBuilder();
 
-			loadoutDisplayStr.Append($" {ChatColors.Silver}[{ChatColors.Default}{Monospace.Convert(i.ToString())}{ChatColors.Silver}] ");
-			foreach (var partialAlias in partialAliases)
-			{
-				var def = ItemDefs.SearchByAlias(partialAlias);
-				if (def == null)
-				{
-					loadoutDisplayStr.Append($"{partialAlias}, ");
-					continue;
-				}
-				loadoutDisplayStr.Append($"{ChatColors.Olive}{def.DisplayName}{ChatColors.Default}, ");
-				items.Add(def.Name);
-			}
-			loadoutDisplayStr.Remove(loadoutDisplayStr.Length - 2, 2);
-			Server.PrintToChatAll(loadoutDisplayStr.ToString());
+		// 	loadoutDisplay.Append($" {ChatColors.Silver}[{ChatColors.Default}{Monospace.Convert(i.ToString())}{ChatColors.Silver}] ");
+		// 	foreach (var partialAlias in partialAliases)
+		// 	{
+		// 		var def = ItemDefs.FindByAlias(partialAlias);
+		// 		if (def == null)
+		// 		{
+		// 			loadoutDisplay.Append($"{ChatColors.LightRed}{partialAlias}{ChatColors.Default}, ");
+		// 			continue;
+		// 		}
+		// 		loadoutDisplay.Append($"{def.DisplayName}, ");
+		// 		items.Add(def.Name);
+		// 	}
+		// 	loadoutDisplay.Remove(loadoutDisplay.Length - 2, 2);
+		// 	Server.PrintToChatAll(loadoutDisplay.ToString());
 
-			loadouts.Add(string.Join(',', items));
-		}
+		// 	loadouts.Add(string.Join(',', items));
+		// }
 
-		ConVars.Loadouts.Value = string.Join(' ', loadouts);
+		// ConVars.Loadouts.Value = string.Join(' ', loadouts);
 	}
 
 	// [ConsoleCommand("css_weapon", "Update the current starting weapons.")]
@@ -301,26 +370,9 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 		return command.CallingContext == CommandCallingContext.Console ? name : name[prefix.Length..];
 	}
 
-	private List<string> FormatItemList(CommandCallingContext callingContext)
-	{
-		var lines = new List<string>();
-		foreach (var (type, defs) in ItemDefs.GroupedByType)
-		{
-			lines.Add(" ");
-			if (callingContext == CommandCallingContext.Console)
-			{
-				lines.Add($"[{type}]");
-				lines.Add(string.Join(", ", defs.Select(def => def.DisplayName)));
-			}
-			else
-			{
-				lines.Add($" {ChatColors.Gold}[{ChatColors.LightYellow}{type}{ChatColors.Gold}]");
-				lines.Add(" " + string.Join(" ", defs.Select((def, index) => $"{((index & 1) == 0 ? ChatColors.Default : ChatColors.Silver)}{def.DisplayName}")));
-			}
-		};
-		return lines;
-	}
-
 	[GeneratedRegex("[^\\w\\d\\s]")]
 	private static partial Regex SymbolsRegex();
+
+	[GeneratedRegex("\\s*([\\+\\-]?)\\s*([^\\s]+)")]
+	private static partial Regex LoadoutArgsRegex();
 }

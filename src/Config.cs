@@ -1,4 +1,5 @@
 
+using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using CounterStrikeSharp.API.Core;
 
@@ -34,7 +35,25 @@ public class Config : BasePluginConfig
 		["item_defuser"] = ["Defuser"]
 	};
 
-	public static IEnumerable<IEnumerable<(string, Regex)>> ParsePropertiesRegex(List<Dictionary<string, string>> properties)
+	public List<List<string>> MutuallyExclusiveItems { get; set; } = [
+		["item_kevlar", "item_assaultsuit", "item_heavyassaultsuit"]
+	];
+
+	public Dictionary<string, List<uint>> CreateItemExclusionGroups()
+	{
+		var groupsByItemName = new Dictionary<string, List<uint>>();
+		for (var group = 0; group < MutuallyExclusiveItems.Count; group++)
+		{
+			foreach (var itemName in MutuallyExclusiveItems[group])
+			{
+				if (groupsByItemName.TryGetValue(itemName, out var groups)) groups.Add((uint)group);
+				else groupsByItemName[itemName] = [(uint)group];
+			}
+		}
+		return groupsByItemName;
+	}
+
+	public static IEnumerable<IEnumerable<(string, Regex)>> CreatePropertiesRegex(List<Dictionary<string, string>> properties)
 	{
 		return properties.Select(list => list.Select(p => (Name: p.Key, Regex: new Regex(p.Value))));
 	}

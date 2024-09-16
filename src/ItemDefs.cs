@@ -1,5 +1,8 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using CounterStrikeSharp.API.Core;
+using CounterStrikeSharp.API.Modules.Commands;
+using CounterStrikeSharp.API.Modules.Utils;
 using SteamDatabase.ValvePak;
 using ValveKeyValue;
 
@@ -7,49 +10,87 @@ namespace LoadoutsPlugin;
 
 public class ItemDefs
 {
-	public IReadOnlyDictionary<string, ItemDef> ByName { get; }
-	public IEnumerable<ItemDef> Alphabetical { get; }
-	public IEnumerable<(string, IEnumerable<ItemDef>)> GroupedByType { get; }
+	private IReadOnlyDictionary<string, ItemDef> ByName { get; }
+	private IEnumerable<ItemDef> List { get; }
+	private IEnumerable<(string, IEnumerable<ItemDef>)> GroupedByType { get; }
 
 	public ItemDefs(IEnumerable<ItemDef> defs)
 	{
-		var defsSorted = defs.OrderBy(def => def.DisplayName);
-		Alphabetical = defsSorted;
-
 		var typeNames = new HashSet<string>();
-		var defsByType = new Dictionary<string, List<ItemDef>>();
 		var defsByName = new Dictionary<string, ItemDef>();
+		var defsByType = new Dictionary<string, List<ItemDef>>();
+		var slotsByType = new Dictionary<string, HashSet<string>>();
+		var defCountBySlot = new Dictionary<string, int>();
+
+		var defsSorted = defs.OrderBy(def => def.Price > -1 ? def.Price : int.MaxValue).ThenBy(def => def.DisplayName);
 		foreach (var def in defsSorted)
 		{
 			typeNames.Add(def.TypeName);
 			defsByName.Add(def.Name, def);
-			if (defsByType.TryGetValue(def.TypeName, out var defList)) defList.Add(def);
-			else defsByType.Add(def.TypeName, [def]);
+
+			if (defsByType.TryGetValue(def.TypeName, out var typeDefs)) typeDefs.Add(def);
+			else
+			{
+				defsByType[def.TypeName] = [def];
+				slotsByType[def.TypeName] = [];
+			}
+
+			if (def.GearSlot == null) continue;
+			slotsByType[def.TypeName].Add(def.GearSlot);
+			defCountBySlot[def.GearSlot] = defCountBySlot.GetValueOrDefault(def.GearSlot) + 1;
 		}
 
-		var typeNamesSorted = typeNames.OrderByDescending(x => defsByType[x].Count);
 		ByName = defsByName;
+
+		var typeNamesSorted = typeNames
+			.OrderByDescending(type => slotsByType[type].Aggregate(0, (count, slot) => count + defCountBySlot[slot]))
+			.ThenByDescending(type => defsByType[type].Count)
+			.ThenByDescending(type => defsByType[type].Aggregate(0, (priceSum, def) => def.Price != -1 ? priceSum + def.Price : priceSum));
 		GroupedByType = typeNamesSorted.Select(typeName => (typeName, defsByType[typeName].AsEnumerable()));
+
+		var orderIndex = 0;
+		var list = new List<ItemDef>();
+		foreach (var (_, typeDefs) in GroupedByType)
+		{
+			foreach (var def in typeDefs)
+			{
+				def.OrderIndex = orderIndex;
+				list.Add(def);
+				orderIndex++;
+			}
+		}
+		List = list;
 	}
 
-	public ItemDef? SearchByAlias(string query)
+	public ItemDef? GetByName(string name) => ByName.GetValueOrDefault(name);
+
+	public ItemDef? FindByAlias(string query)
 	{
 		var searchTerm = new SearchTerm(query);
-		var matches = Alphabetical.Where(def => def.AliasesSearchTerm.Contains(searchTerm));
+		var matches = List.Where(def => def.AliasesSearchTerm.Contains(searchTerm));
 		var startsWithMatch = matches.FirstOrDefault(def => def.AliasesSearchTerm.StartsWith(searchTerm));
 		return startsWithMatch ?? matches.FirstOrDefault();
 	}
 
-	public List<ItemDef> GetFromConVar(string value)
+	public List<string> FormatPrintLines(CommandCallingContext callingContext)
 	{
-		var result = new List<ItemDef>();
-		foreach (var name in value.Split(',', StringSplitOptions.RemoveEmptyEntries))
+		var lines = new List<string>();
+		foreach (var (type, defs) in GroupedByType)
 		{
-			var def = ByName.GetValueOrDefault(name.Trim());
-			if (def == null) continue;
-			result.Add(def);
-		}
-		return result;
+			var line = new StringBuilder();
+			if (callingContext == CommandCallingContext.Console)
+			{
+				line.Append($"\n[{type}]\n");
+				line.Append(string.Join(", ", defs.Select(def => def.DisplayName)));
+			}
+			else
+			{
+				line.Append($"{Chat.NewLine}{ChatColors.Gold}[{ChatColors.LightYellow}{type}{ChatColors.Gold}]{Chat.NewLine}");
+				line.Append(" " + string.Join(" ", defs.Select((def, index) => $"{((index & 1) == 0 ? ChatColors.Default : ChatColors.Silver)}{def.DisplayName}")));
+			}
+			lines.Add(line.ToString());
+		};
+		return lines;
 	}
 
 	private record struct PrefabItemData(string BaseName, gear_slot_t GearSlot, string? DisplayNameKey, string? TypeNameKey);
@@ -88,8 +129,8 @@ public class ItemDefs
 			}
 		}
 
-		var includeProperties = Config.ParsePropertiesRegex(config.ItemIncludeProperties);
-		var excludeProperties = Config.ParsePropertiesRegex(config.ItemExcludeProperties);
+		var includeProperties = Config.CreatePropertiesRegex(config.ItemIncludeProperties);
+		var excludeProperties = Config.CreatePropertiesRegex(config.ItemExcludeProperties);
 
 		bool HasProperties(KVValue itemValue, IEnumerable<IEnumerable<(string Name, Regex Regex)>> propertySets)
 		{
@@ -105,8 +146,6 @@ public class ItemDefs
 
 		foreach (var item in (IEnumerable<KVObject>)items)
 		{
-			var value = item.Value;
-
 			if (includeProperties.Any() && !HasProperties(item.Value, includeProperties)) continue;
 			if (HasProperties(item.Value, excludeProperties)) continue;
 
@@ -114,7 +153,7 @@ public class ItemDefs
 			if (displayNameKey != null) localizationKeys.Add(displayNameKey);
 			var typeNameKey = GetItemProperty(item.Value, "item_type_name")?.ToString()?.TrimStart('#');
 			if (typeNameKey != null) localizationKeys.Add(typeNameKey);
-			filteredItems.Add((value, displayNameKey, typeNameKey));
+			filteredItems.Add((item.Value, displayNameKey, typeNameKey));
 		}
 
 		var langEnEntry = package.FindEntry("resource/csgo_english.txt");
@@ -122,19 +161,47 @@ public class ItemDefs
 		var localization = GameLocalizer.Localize(localizationKeys, new MemoryStream(langEnBytes));
 
 		var defs = new List<ItemDef>();
+		var exclusionGroupsByItem = config.CreateItemExclusionGroups();
+		var slotExclusionGroups = new Dictionary<string, uint>();
+		var nextExclusionGroup = (uint)config.MutuallyExclusiveItems.Count;
+
 		foreach (var (itemValue, displayNameKey, typeNameKey) in filteredItems)
 		{
-			var name = itemValue["name"]?.ToString();
+			var name = GetItemProperty(itemValue, "name")?.ToString();
 			if (name == null) continue;
 
 			var displayName = displayNameKey != null ? localization.GetValueOrDefault(displayNameKey) : null;
 			var typeName = typeNameKey != null ? localization.GetValueOrDefault(typeNameKey) : null;
 
+			var priceStr = GetItemProperty(itemValue, "attributes.in game price")?.ToString();
+			var price = int.TryParse(priceStr, out var parsedPrice) ? parsedPrice : -1;
+
+			var gearSlot = GetItemProperty(itemValue, "item_gear_slot")?.ToString();
+			var gearSlotPosStr = GetItemProperty(itemValue, "item_gear_slot_position")?.ToString();
+			var gearSlotPos = int.TryParse(gearSlotPosStr, out var parsedGearSlotPos) ? parsedGearSlotPos : -1;
+
+			var exclusionGroups = exclusionGroupsByItem.GetValueOrDefault(name, []);
+
+			if (gearSlot != null && gearSlotPos > -1)
+			{
+				var slot = $"{gearSlot}.{gearSlotPos}";
+				var exclusionGroupExists = slotExclusionGroups.TryGetValue(slot, out var slotExclusionGroup);
+				exclusionGroups.Add(exclusionGroupExists ? slotExclusionGroup : nextExclusionGroup);
+
+				if (!exclusionGroupExists)
+				{
+					slotExclusionGroups[slot] = nextExclusionGroup;
+					nextExclusionGroup++;
+				}
+			}
+
 			defs.Add(new ItemDef(
 				name: name,
 				displayName: displayName ?? name,
 				typeName: typeName ?? "Other",
-				gearSlot: itemValue["item_gear_slot"]?.ToString(),
+				gearSlot: gearSlot,
+				price: price,
+				exclusionGroups: exclusionGroups,
 				extraAliases: config.ItemAliases.GetValueOrDefault(name)
 			));
 		}
