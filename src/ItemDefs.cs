@@ -19,8 +19,8 @@ public class ItemDefs
 		var typeNames = new HashSet<string>();
 		var defsByName = new Dictionary<string, ItemDef>();
 		var defsByType = new Dictionary<string, List<ItemDef>>();
-		var slotsByType = new Dictionary<string, HashSet<string>>();
-		var defCountBySlot = new Dictionary<string, int>();
+		var slotsByType = new Dictionary<string, HashSet<GearSlot>>();
+		var defCountBySlot = new Dictionary<GearSlot, int>();
 
 		var defsSorted = defs.OrderBy(def => def.Price > -1 ? def.Price : int.MaxValue).ThenBy(def => def.DisplayName);
 		foreach (var def in defsSorted)
@@ -48,17 +48,10 @@ public class ItemDefs
 			.ThenByDescending(type => defsByType[type].Aggregate(0, (priceSum, def) => def.Price != -1 ? priceSum + def.Price : priceSum));
 		GroupedByType = typeNamesSorted.Select(typeName => (typeName, defsByType[typeName].AsEnumerable()));
 
-		var orderIndex = 0;
 		var list = new List<ItemDef>();
 		foreach (var (_, typeDefs) in GroupedByType)
-		{
 			foreach (var def in typeDefs)
-			{
-				def.OrderIndex = orderIndex;
 				list.Add(def);
-				orderIndex++;
-			}
-		}
 		List = list;
 	}
 
@@ -72,21 +65,21 @@ public class ItemDefs
 		return startsWithMatch ?? matches.FirstOrDefault();
 	}
 
-	public List<string> FormatPrintLines(CommandCallingContext callingContext)
+	public List<string> FormatPrintLines(CommandCallingContext context)
 	{
 		var lines = new List<string>();
 		foreach (var (type, defs) in GroupedByType)
 		{
 			var line = new StringBuilder();
-			if (callingContext == CommandCallingContext.Console)
+			if (context == CommandCallingContext.Chat)
 			{
-				line.Append($"\n[{type}]\n");
-				line.Append(string.Join(", ", defs.Select(def => def.DisplayName)));
+				line.Append($"{Chat.NewLine}{ChatColors.Lime}[{ChatColors.Olive}{type}{ChatColors.Lime}]{Chat.NewLine}");
+				line.Append(" " + string.Join(" ", defs.Select((def, index) => $"{((index & 1) == 0 ? ChatColors.Default : ChatColors.Silver)}{def.DisplayName}")));
 			}
 			else
 			{
-				line.Append($"{Chat.NewLine}{ChatColors.Gold}[{ChatColors.LightYellow}{type}{ChatColors.Gold}]{Chat.NewLine}");
-				line.Append(" " + string.Join(" ", defs.Select((def, index) => $"{((index & 1) == 0 ? ChatColors.Default : ChatColors.Silver)}{def.DisplayName}")));
+				line.Append($"\n[{type}]\n");
+				line.Append(string.Join(", ", defs.Select(def => def.DisplayName)));
 			}
 			lines.Add(line.ToString());
 		};
@@ -176,21 +169,21 @@ public class ItemDefs
 			var priceStr = GetItemProperty(itemValue, "attributes.in game price")?.ToString();
 			var price = int.TryParse(priceStr, out var parsedPrice) ? parsedPrice : -1;
 
-			var gearSlot = GetItemProperty(itemValue, "item_gear_slot")?.ToString();
+			var gearSlotName = GetItemProperty(itemValue, "item_gear_slot")?.ToString();
 			var gearSlotPosStr = GetItemProperty(itemValue, "item_gear_slot_position")?.ToString();
 			var gearSlotPos = int.TryParse(gearSlotPosStr, out var parsedGearSlotPos) ? parsedGearSlotPos : -1;
 
 			var exclusionGroups = exclusionGroupsByItem.GetValueOrDefault(name, []);
 
-			if (gearSlot != null && gearSlotPos > -1)
+			if (gearSlotName != null && gearSlotPos > -1)
 			{
-				var slot = $"{gearSlot}.{gearSlotPos}";
-				var exclusionGroupExists = slotExclusionGroups.TryGetValue(slot, out var slotExclusionGroup);
+				var slotId = $"{gearSlotName}.{gearSlotPos}";
+				var exclusionGroupExists = slotExclusionGroups.TryGetValue(slotId, out var slotExclusionGroup);
 				exclusionGroups.Add(exclusionGroupExists ? slotExclusionGroup : nextExclusionGroup);
 
 				if (!exclusionGroupExists)
 				{
-					slotExclusionGroups[slot] = nextExclusionGroup;
+					slotExclusionGroups[slotId] = nextExclusionGroup;
 					nextExclusionGroup++;
 				}
 			}
@@ -199,7 +192,8 @@ public class ItemDefs
 				name: name,
 				displayName: displayName ?? name,
 				typeName: typeName ?? "Other",
-				gearSlot: gearSlot,
+				gearSlot: GearSlots.GetByName(gearSlotName),
+				gearSlotPos: gearSlotPos,
 				price: price,
 				exclusionGroups: exclusionGroups,
 				extraAliases: config.ItemAliases.GetValueOrDefault(name)

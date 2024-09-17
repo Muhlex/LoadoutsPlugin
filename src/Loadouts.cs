@@ -1,3 +1,6 @@
+using CounterStrikeSharp.API.Modules.Commands;
+using CounterStrikeSharp.API.Modules.Utils;
+
 namespace LoadoutsPlugin;
 
 public class Loadouts
@@ -39,6 +42,22 @@ public class Loadouts
 		else return List[Random.Shared.Next(List.Count)];
 	}
 
+	public IEnumerable<string> FormatPrint(CommandCallingContext context)
+	{
+		var isChat = context == CommandCallingContext.Chat;
+		if (!isChat) return [string.Join('\n', List.Select((loadout, i) => $"[{i + 1}] {loadout.FormatPrint(context)}"))];
+
+		var chunkSize = 2;
+		return List
+			.Chunk(chunkSize)
+			.Select((loadouts, i) => string.Join(
+				Chat.NewLine,
+				loadouts.Select((loadout, j) =>
+					$" {ChatColors.Silver}[{ChatColors.Default}{Monospace.Convert($"{i * chunkSize + j + 1}")}{ChatColors.Silver}]{ChatColors.Default} {loadout.FormatPrint(context)}"
+				))
+			);
+	}
+
 	public string ToConVarValue()
 	{
 		return string.Join(' ', List.Select(loadout => string.Join(',', loadout.Items)));
@@ -46,15 +65,19 @@ public class Loadouts
 
 	static public Loadouts FromConVarValue(ItemDefs itemDefs, string conVarValue)
 	{
+		Console.WriteLine("Parsing loadouts from convar value");
 		var loadouts = new List<Loadout>();
 
 		var stringSplitOptions = StringSplitOptions.RemoveEmptyEntries & StringSplitOptions.TrimEntries;
 		var loadoutStrings = conVarValue.Split(' ', stringSplitOptions);
+		if (loadoutStrings.Length == 1 && loadoutStrings[0] == "") return new Loadouts(loadouts);
+
 		foreach (var loadoutString in loadoutStrings)
 		{
 			var itemNames = loadoutString.Split(',', StringSplitOptions.RemoveEmptyEntries);
 			var items = new List<ItemDef>();
-			foreach (var itemName in itemNames) {
+			foreach (var itemName in itemNames)
+			{
 				var item = itemDefs.GetByName(itemName);
 				if (item == null) continue;
 				items.Add(item);

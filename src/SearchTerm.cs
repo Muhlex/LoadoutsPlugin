@@ -2,26 +2,28 @@ using System.Text.RegularExpressions;
 
 namespace LoadoutsPlugin;
 
-public partial class SearchTerm(IEnumerable<string> names)
+public partial class SearchTerm(IEnumerable<string> aliases)
 {
-	public SearchTerm(string name) : this([name]) { }
+	public SearchTerm(string alias) : this([alias]) { }
 
-	public IReadOnlyList<string> Names { get; } = names.Select(alias => NonAlphanumericRegex().Replace(alias, "")).ToList();
+	public IEnumerable<string> Aliases { get; } = aliases
+		.Select(alias => NonAlphanumericRegex().Replace(alias, ""))
+		.Where(alias => alias != "");
 
 	public bool Contains(SearchTerm serachTerm)
 	{
-		return serachTerm.Names.Any(
-			searchName => Names.Any(
-				name => name.Contains(searchName, StringComparison.OrdinalIgnoreCase)
+		return serachTerm.Aliases.Any(
+			searchAlias => Aliases.Any(
+				alias => alias.Contains(searchAlias, StringComparison.OrdinalIgnoreCase)
 			)
 		);
 	}
 
 	public bool StartsWith(SearchTerm serachTerm)
 	{
-		return serachTerm.Names.Any(
-			searchName => Names.Any(
-				name => name.StartsWith(searchName, StringComparison.OrdinalIgnoreCase)
+		return serachTerm.Aliases.Any(
+			searchAlias => Aliases.Any(
+				alias => alias.StartsWith(searchAlias, StringComparison.OrdinalIgnoreCase)
 			)
 		);
 	}

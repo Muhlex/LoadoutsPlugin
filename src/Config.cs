@@ -1,5 +1,4 @@
 
-using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using CounterStrikeSharp.API.Core;
 
@@ -12,7 +11,7 @@ public class Config : BasePluginConfig
 	];
 	public List<Dictionary<string, string>> ItemExcludeProperties { get; set; } = [
 		new() { ["item_class"] = "^weapon_knife$" },
-		new() { ["item_class"] = "^weapon_", ["flexible_loadout_slot"] = "^none$" },
+		new() { ["item_class"] = "^weapon_(?!healthshot$)", ["flexible_loadout_slot"] = "^none$" },
 		new() { ["item_class"] = "^(item_nvgs)|(item_defuser)$" },
 		new() { ["flexible_loadout_category"] = "^(heavy)|(c4)$" },
 	];
@@ -32,7 +31,8 @@ public class Config : BasePluginConfig
 		["item_kevlar"] = ["Armor", "1"],
 		["item_assaultsuit"] = ["Kevlar Helmet", "Helmet", "2"],
 		["item_heavyassaultsuit"] = ["Heavy Armor", "3"],
-		["item_defuser"] = ["Defuser"]
+		["item_defuser"] = ["Defuser"],
+		["weapon_healthshot"] = ["Health-Shot"]
 	};
 
 	public List<List<string>> MutuallyExclusiveItems { get; set; } = [

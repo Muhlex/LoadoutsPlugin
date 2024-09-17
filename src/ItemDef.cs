@@ -5,25 +5,26 @@ public partial class ItemDef
 	public string Name { get; }
 	public string DisplayName { get; }
 	public string TypeName { get; }
+	public GearSlot GearSlot { get; }
+	public int GearSlotPos { get; }
 	public int Price { get; }
-	public string? GearSlot { get; }
 	public IEnumerable<uint> ExclusionGroups { get; }
 
 	public IReadOnlyList<string> Aliases { get; }
 	public SearchTerm AliasesSearchTerm { get; }
 
-	public int OrderIndex { get; set; } = -1;
-
 	public ItemDef(
-		string name, string displayName, string typeName,
-		int price = -1, string? gearSlot = null, IEnumerable<uint>? exclusionGroups = null, IEnumerable<string>? extraAliases = null
-		)
+		string name, string displayName, string typeName, GearSlot gearSlot,
+		int gearSlotPos = -1, int price = -1,
+		IEnumerable<uint>? exclusionGroups = null, IEnumerable<string>? extraAliases = null
+	)
 	{
 		Name = name;
 		DisplayName = displayName;
 		TypeName = typeName;
-		Price = price;
 		GearSlot = gearSlot;
+		GearSlotPos = gearSlotPos;
+		Price = price;
 		ExclusionGroups = exclusionGroups ?? [];
 
 		var aliases = new List<string>([displayName]);
