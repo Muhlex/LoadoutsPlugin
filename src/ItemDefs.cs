@@ -65,7 +65,7 @@ public class ItemDefs
 		return startsWithMatch ?? matches.FirstOrDefault();
 	}
 
-	public List<string> FormatPrintLines(CommandCallingContext context)
+	public List<string> FormatPrint(CommandCallingContext context)
 	{
 		var lines = new List<string>();
 		foreach (var (type, defs) in GroupedByType)

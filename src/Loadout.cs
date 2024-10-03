@@ -61,23 +61,35 @@ public class Loadout
 		foreach (var group in item.ExclusionGroups) ExclusionGroupItems.Remove(group);
 	}
 
-	public string FormatPrint(CommandCallingContext context)
+	public string FormatPrint(CommandCallingContext context, string id = "", (char Brackets, char Number)? colors = null)
 	{
 		var isChat = context == CommandCallingContext.Chat;
+		string GetPrefix()
+		{
+			if (id == "") return "";
+			if (!isChat) return $"[{id}] ";
+			var colBrackets = colors?.Brackets ?? ChatColors.Silver;
+			var colNumber = colors?.Number ?? ChatColors.Default;
+			return $"{colBrackets}[{colNumber}{Monospace.Convert($"{id}")}{colBrackets}] ";
+		}
+
+		var itemsStr = "";
 		if (AllItems.Count == 0)
 		{
-			if (isChat) return $"{ChatColors.DarkBlue}<empty>";
-			else return "<empty>";
+			if (isChat) itemsStr = $"{ChatColors.DarkBlue}<empty>";
+			else itemsStr = "<empty>";
+		}
+		else if (isChat)
+		{
+			itemsStr = string.Join(
+				$"{ChatColors.Default}, ",
+				AllItems.Select(item => $"{item.GearSlot.ChatColor}{item.DisplayName}")
+			);
 		}
 		else
 		{
-			if (isChat)
-				return string.Join(
-					$"{ChatColors.Default}, ",
-					AllItems.Select(item => $"{item.GearSlot.ChatColor}{item.DisplayName}")
-				);
-			else
-				return string.Join(", ", AllItems.Select(item => item.DisplayName));
+			itemsStr = string.Join(", ", AllItems.Select(item => item.DisplayName));
 		}
+		return $"{GetPrefix()}{itemsStr}";
 	}
 }

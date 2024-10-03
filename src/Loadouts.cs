@@ -1,5 +1,4 @@
 using CounterStrikeSharp.API.Modules.Commands;
-using CounterStrikeSharp.API.Modules.Utils;
 
 namespace LoadoutsPlugin;
 
@@ -42,19 +41,19 @@ public class Loadouts
 		else return List[Random.Shared.Next(List.Count)];
 	}
 
-	public IEnumerable<string> FormatPrint(CommandCallingContext context)
+	public IEnumerable<string> FormatPrint(CommandCallingContext context, IList<string>? ids = null, (char Brackets, char Number)? colors = null)
 	{
+		string getId(int index) => ids != null ? ids[index] : $"{index + 1}";
+
 		var isChat = context == CommandCallingContext.Chat;
-		if (!isChat) return [string.Join('\n', List.Select((loadout, i) => $"[{i + 1}] {loadout.FormatPrint(context)}"))];
+		if (!isChat) return [string.Join("\n", List.Select((loadout, i) => loadout.FormatPrint(context, getId(i))))];
 
 		var chunkSize = 2;
 		return List
 			.Chunk(chunkSize)
-			.Select((loadouts, i) => string.Join(
+			.Select((loadouts, i) => " " + string.Join(
 				Chat.NewLine,
-				loadouts.Select((loadout, j) =>
-					$" {ChatColors.Silver}[{ChatColors.Default}{Monospace.Convert($"{i * chunkSize + j + 1}")}{ChatColors.Silver}]{ChatColors.Default} {loadout.FormatPrint(context)}"
-				))
+				loadouts.Select((loadout, j) => loadout.FormatPrint(context, getId(i * chunkSize + j), colors)))
 			);
 	}
 

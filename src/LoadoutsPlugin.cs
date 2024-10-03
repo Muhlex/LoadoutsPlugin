@@ -1,7 +1,10 @@
-﻿using System.Text.RegularExpressions;
+﻿using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
+using CounterStrikeSharp.API.Core.Translations;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Utils;
@@ -83,9 +86,9 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 	[ConsoleCommand("css_items", "Get a list of available items.")]
 	public void OnCommandItems(CCSPlayerController? player, CommandInfo command)
 	{
-		var context = command.CallingContext;
-		command.ReplyToCommand(AddPrefix("Available items:", context));
-		foreach (var line in ItemDefs.FormatPrintLines(context)) command.ReplyToCommand(line);
+		var ctx = command.CallingContext;
+		command.ReplyToCommand(FormatOutput($"{Prefix} Available items:", ctx));
+		foreach (var message in ItemDefs.FormatPrint(ctx)) command.ReplyToCommand(message);
 	}
 
 	[ConsoleCommand("css_loadouts", "View and edit the current starting loadouts.")]
@@ -93,26 +96,38 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 	[ConsoleCommand("css_lo", "View and edit the current starting loadouts.")]
 	public void OnCommandLoadout(CCSPlayerController? player, CommandInfo command)
 	{
-		var context = command.CallingContext;
-		var isChat = context == CommandCallingContext.Chat;
+		var ctx = command.CallingContext;
+		var cmdName = FormatCommandName(command);
+		var playerName = player != null ? $"{ChatColors.Olive}{player.PlayerName}{ChatColors.Default}" : null;
+		bool GetHasPermission()
+		{
+			string[] permissions = ["@css/cvar", "@loadouts/edit"];
+			return permissions.Any(permission => AdminManager.PlayerHasPermissions(player, permission));
+		}
+		void ReplyRequirePermission()
+		{
+			command.ReplyToCommand(FormatOutput(
+				$"{Prefix} {ChatColors.Red}You are not permitted to edit loadouts.",
+				ctx
+			));
+		}
+		var hasPermission = GetHasPermission();
 
 		if (command.ArgCount < 2)
 		{
-			if (Loadouts.Count == 0) command.ReplyToCommand(AddPrefix("No loadouts defined.", context));
+			if (Loadouts.Count == 0)
+			{
+				command.ReplyToCommand(FormatOutput($"{Prefix} No loadouts defined.", ctx));
+			}
 			else
 			{
-				command.ReplyToCommand(AddPrefix($"Current loadout{(Loadouts.Count == 1 ? "" : "s")}:", context));
-				foreach (var line in Loadouts.FormatPrint(context)) command.ReplyToCommand(line);
+				command.ReplyToCommand(FormatOutput($"{Prefix} Current loadout{(Loadouts.Count == 1 ? "" : "s")}:", ctx));
+				foreach (var message in Loadouts.FormatPrint(ctx)) command.ReplyToCommand(message);
+			}
+			if (hasPermission) {
+				command.ReplyToCommand(FormatOutput($"{ChatColors.Grey}Use {ChatColors.Default}'{cmdName} help'{ChatColors.Grey} to view loadout editing commands.", ctx));
 			}
 			return;
-		}
-
-		bool RequirePermission()
-		{
-			string[] permissions = ["@css/cvar", "@loadouts/edit"];
-			var allowed = permissions.Any(permission => AdminManager.PlayerHasPermissions(player, permission));
-			if (!allowed) command.ReplyToCommand(AddPrefix("You do not have permission to edit loadouts.", context));
-			return allowed;
 		}
 
 		var args = new List<string>();
@@ -122,45 +137,79 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 
 		switch (option)
 		{
+			case "help":
+			case "h":
+			case "howto":
+			case "edit":
+			case "?":
+				if (!hasPermission) {
+					ReplyRequirePermission();
+					return;
+				}
+				command.ReplyToCommand(FormatOutput($"{Prefix} Available loadout commands:", ctx));
+				command.ReplyToCommand(FormatOutput([
+					$"{cmdName}",
+					$"{cmdName} {ChatColors.Olive}add{ChatColors.Default} <item> [item] ... {ChatColors.Grey}(add new loadout)",
+					$"{cmdName} {ChatColors.Olive}remove{ChatColors.Default} <loadout # | 'all'> [loadout #] ... {ChatColors.Grey}(remove loadouts of given numbers)",
+					$"{cmdName} {ChatColors.Olive}copy{ChatColors.Default} <from loadout #> [to loadout #] {ChatColors.Grey}(copy loadout to new/existing slot)",
+					$"{cmdName} {ChatColors.Olive}help{ChatColors.Default} {ChatColors.Grey}(show this help)",
+					$"{FormatCommandName(command, "css_items")} {ChatColors.Grey}(list available items)",
+				], ctx));
+				break;
+
 			case "add":
 			case "ad":
 			case "a":
 			case "create":
 			case "new":
-				if (!RequirePermission()) break;
+				if (!hasPermission) {
+					ReplyRequirePermission();
+					return;
+				}
+
+				var invalidItemAliases = new List<string>();
 				var loadout = new Loadout();
 				foreach (var partialItemAlias in parameters)
 				{
 					var item = ItemDefs.FindByAlias(partialItemAlias);
 					if (item == null)
 					{
-						command.ReplyToCommand(isChat
-							? $" {ChatColors.Grey}Ignoring unknown item: {ChatColors.Red}{partialItemAlias}"
-							: $"Ignoring unknown item: '{partialItemAlias}'"
-						);
+						invalidItemAliases.Add(partialItemAlias);
 						continue;
-					};
+					}
 
 					var replacedItems = loadout.SetItem(item);
 					if (replacedItems.Count == 0) continue;
 					var replacedItemsStr = string.Join(", ", replacedItems.Select(item => item.DisplayName));
-					var infoStr = $"Replaced item{(replacedItems.Count == 1 ? "" : "s")}:";
-					command.ReplyToCommand(isChat
-						? $" {ChatColors.Grey}{infoStr} {ChatColors.Red}{replacedItemsStr} ➔ {ChatColors.Default}{item.DisplayName}"
-						: $"{infoStr} {replacedItemsStr} ➔ {item.DisplayName}"
-					);
+					var infoReplacedItem = $"Replaced item{(replacedItems.Count == 1 ? "" : "s")}:";
+					command.ReplyToCommand(FormatOutput(
+						$"{ChatColors.Grey}{infoReplacedItem} {ChatColors.Red}{replacedItemsStr} ➔ {ChatColors.Default}{item.DisplayName}",
+						ctx
+					));
+				}
+
+				if (invalidItemAliases.Count > 0)
+				{
+					foreach (var invalidItemAlias in invalidItemAliases)
+					{
+						command.ReplyToCommand(FormatOutput(
+							$"{ChatColors.Grey}Ignoring unknown item: {ChatColors.Red}'{invalidItemAlias}'",
+							ctx
+						));
+					}
+					command.ReplyToCommand(FormatOutput(
+							$"{ChatColors.Grey}Use {ChatColors.Default}'{FormatCommandName(command, "css_items")}'{ChatColors.Grey} for a list of available items.",
+							ctx
+						));
 				}
 				Loadouts.Add(loadout);
-				var loadoutStrConsole = loadout.FormatPrint(CommandCallingContext.Console);
-				var announcementConsole = player != null
-					? $"{player.PlayerName} added loadout: '{loadoutStrConsole}'"
-					: $"Added loadout: '{loadoutStrConsole}'";
-				Console.WriteLine(AddPrefix(announcementConsole, CommandCallingContext.Console));
-				var loadoutStrChat = loadout.FormatPrint(CommandCallingContext.Chat);
-				var announcementChat = player != null
-					? $" {ChatColors.Olive}{player.PlayerName}{ChatColors.Default} added loadout: {loadoutStrChat}"
-					: $"Added loadout: {loadoutStrChat}";
-				Server.PrintToChatAll(AddPrefix(announcementChat, CommandCallingContext.Chat));
+
+				var infoAdded = player != null
+					? $"{ChatColors.Olive}{player.PlayerName}{ChatColors.Default} added loadout:"
+					: "Loadout added:";
+				var infoAddedPrefixed = $"{Prefix} {infoAdded} {loadout.FormatPrint(ctx)}";
+				Console.WriteLine(FormatOutput(infoAddedPrefixed, CommandCallingContext.Console));
+				Server.PrintToChatAll(FormatOutput(infoAddedPrefixed, CommandCallingContext.Chat));
 				break;
 
 			case "remove":
@@ -169,62 +218,83 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 			case "r":
 			case "delete":
 			case "del":
-				if (!RequirePermission()) break;
+				if (!hasPermission) {
+					ReplyRequirePermission();
+					return;
+				}
+
+				if (Loadouts.Count == 0)
+				{
+					command.ReplyToCommand(FormatOutput([
+						"No loadouts configured.",
+						$"{ChatColors.Grey}Use {ChatColors.Default}'{cmdName} add'{ChatColors.Grey} to add one."
+					], ctx));
+					return;
+				}
+
+				List<string> infoRemoveUsage = [
+					$"{ChatColors.Grey}Usage: {cmdName} {option} <loadout number> [loadout number] ...",
+					$"Remove all loadouts: {cmdName} {option} *",
+				];
 
 				if (!parameters.Any())
 				{
-					// TODO: This and removing everything and feedback
+					command.ReplyToCommand(FormatOutput(
+						infoRemoveUsage.Prepend($"{Prefix} No loadout number provided."), ctx
+					));
+					return;
 				};
 
-				if (parameters.First() is "all" or "any" or "every" or "clear" or "*")
+				var validLoadoutIndices = new SortedSet<int>();
+				var invalidLoadoutNumbers = new HashSet<string>();
+				foreach (var param in parameters)
 				{
-					Loadouts.Clear();
-					Console.WriteLine("Removed all loadouts.");
-					break;
-				}
-
-				var validRemoveIndices = new List<int>();
-				var toRemove = parameters
-					.Select(param => int.TryParse(param, out var i) ? (param, i - 1) : (param, -1))
-					.Distinct();
-
-				foreach (var (param, index) in toRemove)
-				{
-					if (index < 0 || index >= Loadouts.Count)
+					if (param is "all" or "any" or "every" or "clear" or "*")
 					{
-						command.ReplyToCommand(isChat
-							? $" {ChatColors.Grey}Not a valid loadout number: {ChatColors.Red}{param}"
-							: $"Not a valid loadout number: '{param}'"
-						);
-						continue;
+						Loadouts.Clear();
+						var infoCleared = player != null
+							? $"{ChatColors.Olive}{player.PlayerName}{ChatColors.Default} removed {ChatColors.Red}all{ChatColors.Default} loadouts."
+							: $"{ChatColors.Red}All{ChatColors.Default} loadouts removed.";
+						var infoClearedPrefixed = $"{Prefix} {infoCleared}";
+						Console.WriteLine(FormatOutput(infoClearedPrefixed, CommandCallingContext.Console));
+						Server.PrintToChatAll(FormatOutput(infoClearedPrefixed, CommandCallingContext.Chat));
+						return;
 					}
-					validRemoveIndices.Add(index);
+					var index = int.TryParse(param, out var i) ? i - 1 : -1;
+					if (index >= 0 && index < Loadouts.Count) validLoadoutIndices.Add(index);
+					else invalidLoadoutNumbers.Add(param);
 				}
 
-				foreach (var index in validRemoveIndices.OrderDescending()) Loadouts.RemoveAt(index);
+				if (invalidLoadoutNumbers.Count > 0)
+				{
+					var invalidIndicesStr = $"{ChatColors.Red}{string.Join($"{ChatColors.Default}, {ChatColors.Red}", invalidLoadoutNumbers)}";
+					command.ReplyToCommand(FormatOutput(
+						$"{Prefix} Invalid loadout number(s): {invalidIndicesStr}",
+						ctx
+					));
+				}
+				if (validLoadoutIndices.Count == 0) return;
 
-				var loadoutIndexStr = parameters.FirstOrDefault();
-				if (!toRemove.Any())
+				var removeLoadouts = new Loadouts();
+				var removeLoadoutIds = new List<string>();
+				foreach (var index in validLoadoutIndices)
 				{
-					Console.WriteLine("No loadout number provided");
-					break;
+					removeLoadouts.Add(Loadouts[index]);
+					removeLoadoutIds.Add($"{index + 1}");
 				}
-				if (loadoutIndexStr is "all" or "any" or "every" or "*")
-				{
-					Loadouts.Clear();
-					Console.WriteLine("Removed all loadouts.");
-					break;
-				}
+				for (var i = validLoadoutIndices.Count - 1; i >= 0; --i) Loadouts.RemoveAt(validLoadoutIndices.ElementAt(i));
 
-				if (int.TryParse(loadoutIndexStr, out var loadoutIndex) && loadoutIndex > 0 && loadoutIndex <= Loadouts.Count)
-				{
-					Loadouts.RemoveAt(loadoutIndex - 1);
-					Console.WriteLine($"Removed loadout {loadoutIndexStr}");
-				}
-				else
-				{
-					Console.WriteLine($"Loadout {loadoutIndexStr} does not exist");
-				}
+				var infoRemoved = player != null
+					? $"{ChatColors.Olive}{player.PlayerName}{ChatColors.Default} removed {ChatColors.Red}{removeLoadouts.Count}{ChatColors.Default} loadout{(removeLoadouts.Count == 1 ? "" : "s")}:"
+					: $"{ChatColors.Red}{removeLoadouts.Count}{ChatColors.Default} loadout{(removeLoadouts.Count == 1 ? "" : "s")} removed:";
+				var infoRemovedPrefixed = $"{Prefix} {infoRemoved}";
+				Console.WriteLine(FormatOutput(infoRemovedPrefixed, CommandCallingContext.Console));
+				Server.PrintToChatAll(FormatOutput(infoRemovedPrefixed, CommandCallingContext.Chat));
+				var validLoadoutNumbers = validLoadoutIndices.Select(i => $"{i + 1}").ToList();
+				foreach (var message in removeLoadouts.FormatPrint(CommandCallingContext.Console, validLoadoutNumbers))
+					Console.WriteLine(message);
+				foreach (var message in removeLoadouts.FormatPrint(CommandCallingContext.Chat, validLoadoutNumbers, (Brackets: ChatColors.Red, Number: ChatColors.LightRed)))
+					Server.PrintToChatAll(message);
 				break;
 
 			case "copy":
@@ -232,14 +302,20 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 			case "cp":
 			case "c":
 			case "clone":
-				if (!RequirePermission()) break;
+				if (!hasPermission) {
+					ReplyRequirePermission();
+					return;
+				}
 				break;
 
 			default:
-				if (int.TryParse(option, out var loadoutSlot) && loadoutSlot > 0)
+				if (int.TryParse(option, out var loadoutNumber) && loadoutNumber > 0)
 				{
-					if (!RequirePermission()) break;
-					Console.WriteLine($"Loadout slot {loadoutSlot}");
+					if (!hasPermission) {
+						ReplyRequirePermission();
+						return;
+					}
+					Console.WriteLine($"Loadout slot {loadoutNumber}");
 					break;
 				}
 				else
@@ -248,31 +324,39 @@ public partial class LoadoutsPlugin : BasePlugin, IPluginConfig<Config>
 					break;
 				}
 		}
-
-		// TODO: Print differently on server
-		// TODO: Give calling player more feedback than the others
 	}
 
-	private string ChatTrigger { get; } = CoreConfig.PublicChatTrigger.FirstOrDefault("!");
+	private string Prefix => $"{ChatColors.Gold}[{ChatColors.LightYellow}{ModuleName}{ChatColors.Gold}]{ChatColors.Default}";
 
-	private string AddPrefix(string str, CommandCallingContext context)
+	private static string FormatOutput(IEnumerable<string> text, CommandCallingContext context)
 	{
 		if (context == CommandCallingContext.Chat)
-			return $" {ChatColors.Gold}[{ChatColors.LightYellow}{ModuleName}{ChatColors.Gold}]{ChatColors.Default} {str}";
-		return $"[{ModuleName}] {str}";
+			return $" {string.Join(Chat.NewLine, text).Replace("'", "")}";
+		else
+			return string.Join('\n', text.Select(StripChatColors));
 	}
+	private static string FormatOutput(string text, CommandCallingContext context) => FormatOutput([text], context);
 
 	private static string FormatCommandName(CommandInfo command, string? commandName = null)
 	{
-		const string prefix = "css_";
 		var name = commandName ?? command.GetArg(0);
-		if (!name.StartsWith(prefix)) return name;
-		return command.CallingContext == CommandCallingContext.Chat ? name[prefix.Length..] : name;
+		var isChat = command.CallingContext == CommandCallingContext.Chat;
+		if (isChat)
+		{
+			const string prefix = "css_";
+			if (name.StartsWith(prefix)) name = name[prefix.Length..];
+		}
+		return $"{(isChat ? Chat.Trigger : "")}{name}";
 	}
 
-	[GeneratedRegex("[^\\w\\d\\s]")]
-	private static partial Regex SymbolsRegex();
-
-	[GeneratedRegex("\\s*([\\+\\-]?)\\s*([^\\s]+)")]
-	private static partial Regex LoadoutArgsRegex();
+	private static string StripChatColors(string str)
+	{
+		var builder = new StringBuilder();
+		foreach (var chr in str)
+		{
+			if (char.IsBetween(chr, '\u0001', '\u0010')) continue;
+			builder.Append(chr);
+		}
+		return builder.ToString();
+	}
 }
